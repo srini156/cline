@@ -1,136 +1,88 @@
-import * as path from "path"
-import Parser from "web-tree-sitter"
-import {
-	javascriptQuery,
-	typescriptQuery,
-	pythonQuery,
-	rustQuery,
-	goQuery,
-	cppQuery,
-	cQuery,
-	csharpQuery,
-	rubyQuery,
-	javaQuery,
-	phpQuery,
-	swiftQuery,
-	kotlinQuery,
-} from "./queries"
+import * as path from "path";
+import Parser from "web-tree-sitter";
+import { LanguageFactoryRegistry } from "./LanguageFactoryRegistry";
+import "./factories"; // Side-effect import to register all language factories
 
+/**
+ * Defines the structure for the map of loaded language parsers.
+ * Keys are file extensions (without the dot, e.g., "js"), and values
+ * are objects containing the initialized TreeSitter parser and its query.
+ */
 export interface LanguageParser {
-	[key: string]: {
-		parser: Parser
-		query: Parser.Query
-	}
+  [key: string]: {
+    parser: Parser;
+    query: Parser.Query;
+  };
 }
 
-async function loadLanguage(langName: string) {
-	return await Parser.Language.load(path.join(__dirname, `tree-sitter-${langName}.wasm`))
-}
+let isParserInitialized = false;
 
-let isParserInitialized = false
-
-async function initializeParser() {
-	if (!isParserInitialized) {
-		await Parser.init()
-		isParserInitialized = true
-	}
+/**
+ * Initializes the global TreeSitter Parser instance.
+ * This function ensures that `Parser.init()` is called only once.
+ * It must be called before any language grammars are loaded.
+ */
+async function initializeGlobalParser(): Promise<void> {
+  if (!isParserInitialized) {
+    // Initialize the TreeSitter WASM utility.
+    // This is required once before any languages can be loaded.
+    await Parser.init();
+    isParserInitialized = true;
+  }
 }
 
 /*
-Using node bindings for tree-sitter is problematic in vscode extensions 
-because of incompatibility with electron. Going the .wasm route has the 
-advantage of not having to build for multiple architectures.
+This module is responsible for loading TreeSitter language parsers and queries
+based on the file extensions of the files to be parsed. It now uses a
+Factory pattern to delegate the loading of specific language grammars and
+queries to dedicated factory classes.
 
-We use web-tree-sitter and tree-sitter-wasms which provides auto-updating prebuilt WASM binaries for tree-sitter's language parsers.
+The process involves:
+1. Initializing the global TreeSitter parser (if not already done).
+2. Extracting unique file extensions from the list of files to parse.
+3. For each unique extension, retrieving the corresponding language factory
+   from the LanguageFactoryRegistry.
+4. Calling the `load()` method on the factory to get the initialized parser
+   and compiled query for that language.
+5. Storing these assets in a map, keyed by extension, for use by other
+   parts of the TreeSitter service.
 
-This function loads WASM modules for relevant language parsers based on input files:
-1. Extracts unique file extensions
-2. Maps extensions to language names
-3. Loads corresponding WASM files (containing grammar rules)
-4. Uses WASM modules to initialize tree-sitter parsers
-
-This approach optimizes performance by loading only necessary parsers once for all relevant files.
-
-Sources:
-- https://github.com/tree-sitter/node-tree-sitter/issues/169
-- https://github.com/tree-sitter/node-tree-sitter/issues/168
-- https://github.com/Gregoor/tree-sitter-wasms/blob/main/README.md
-- https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_web/README.md
-- https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_web/test/query-test.js
+This approach replaces a large switch statement, making the system more
+extensible, maintainable, and testable, as new languages can be added
+by simply creating a new factory and registering it.
 */
 export async function loadRequiredLanguageParsers(filesToParse: string[]): Promise<LanguageParser> {
-	await initializeParser()
-	const extensionsToLoad = new Set(filesToParse.map((file) => path.extname(file).toLowerCase().slice(1)))
-	const parsers: LanguageParser = {}
-	for (const ext of extensionsToLoad) {
-		let language: Parser.Language
-		let query: Parser.Query
-		switch (ext) {
-			case "js":
-			case "jsx":
-				language = await loadLanguage("javascript")
-				query = language.query(javascriptQuery)
-				break
-			case "ts":
-				language = await loadLanguage("typescript")
-				query = language.query(typescriptQuery)
-				break
-			case "tsx":
-				language = await loadLanguage("tsx")
-				query = language.query(typescriptQuery)
-				break
-			case "py":
-				language = await loadLanguage("python")
-				query = language.query(pythonQuery)
-				break
-			case "rs":
-				language = await loadLanguage("rust")
-				query = language.query(rustQuery)
-				break
-			case "go":
-				language = await loadLanguage("go")
-				query = language.query(goQuery)
-				break
-			case "cpp":
-			case "hpp":
-				language = await loadLanguage("cpp")
-				query = language.query(cppQuery)
-				break
-			case "c":
-			case "h":
-				language = await loadLanguage("c")
-				query = language.query(cQuery)
-				break
-			case "cs":
-				language = await loadLanguage("c_sharp")
-				query = language.query(csharpQuery)
-				break
-			case "rb":
-				language = await loadLanguage("ruby")
-				query = language.query(rubyQuery)
-				break
-			case "java":
-				language = await loadLanguage("java")
-				query = language.query(javaQuery)
-				break
-			case "php":
-				language = await loadLanguage("php")
-				query = language.query(phpQuery)
-				break
-			case "swift":
-				language = await loadLanguage("swift")
-				query = language.query(swiftQuery)
-				break
-			case "kt":
-				language = await loadLanguage("kotlin")
-				query = language.query(kotlinQuery)
-				break
-			default:
-				throw new Error(`Unsupported language: ${ext}`)
-		}
-		const parser = new Parser()
-		parser.setLanguage(language)
-		parsers[ext] = { parser, query }
-	}
-	return parsers
+  await initializeGlobalParser(); // Ensure TreeSitter itself is initialized
+
+  const parsers: LanguageParser = {};
+  const uniqueExtensions = new Set(
+    filesToParse.map((file) => path.extname(file).toLowerCase().slice(1))
+  );
+
+  for (const ext of uniqueExtensions) {
+    if (!ext) { // Handle files without extensions or empty extensions
+      continue;
+    }
+
+    const factory = LanguageFactoryRegistry.getByExtension(ext);
+    if (factory) {
+      try {
+        // The factory's load() method is responsible for loading WASM
+        // and compiling the query, and includes caching.
+        parsers[ext] = await factory.load();
+      } catch (error) {
+        console.error(
+          `[TreeSitter] Failed to load parser for extension ".${ext}":`,
+          error instanceof Error ? error.message : String(error)
+        );
+        // Optionally, re-throw or handle more gracefully depending on requirements.
+        // For now, we log the error and skip this language.
+      }
+    } else {
+      // Log a warning if no factory is found for a given extension.
+      // This indicates an unsupported language for TreeSitter parsing.
+      console.warn(`[TreeSitter] No language factory found for extension: ".${ext}"`);
+    }
+  }
+  return parsers;
 }
