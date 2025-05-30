@@ -1,7 +1,7 @@
-import * as path from "path";
-import Parser from "web-tree-sitter";
-import { LanguageFactoryRegistry } from "./LanguageFactoryRegistry";
-import "./factories"; // Side-effect import to register all language factories
+import * as path from "path"
+import Parser from "web-tree-sitter"
+import { LanguageFactoryRegistry } from "./LanguageFactoryRegistry"
+import "./factories" // Side-effect import to register all language factories
 
 /**
  * Defines the structure for the map of loaded language parsers.
@@ -9,13 +9,13 @@ import "./factories"; // Side-effect import to register all language factories
  * are objects containing the initialized TreeSitter parser and its query.
  */
 export interface LanguageParser {
-  [key: string]: {
-    parser: Parser;
-    query: Parser.Query;
-  };
+	[key: string]: {
+		parser: Parser
+		query: Parser.Query
+	}
 }
 
-let isParserInitialized = false;
+let isParserInitialized = false
 
 /**
  * Initializes the global TreeSitter Parser instance.
@@ -23,12 +23,12 @@ let isParserInitialized = false;
  * It must be called before any language grammars are loaded.
  */
 async function initializeGlobalParser(): Promise<void> {
-  if (!isParserInitialized) {
-    // Initialize the TreeSitter WASM utility.
-    // This is required once before any languages can be loaded.
-    await Parser.init();
-    isParserInitialized = true;
-  }
+	if (!isParserInitialized) {
+		// Initialize the TreeSitter WASM utility.
+		// This is required once before any languages can be loaded.
+		await Parser.init()
+		isParserInitialized = true
+	}
 }
 
 /*
@@ -52,37 +52,36 @@ extensible, maintainable, and testable, as new languages can be added
 by simply creating a new factory and registering it.
 */
 export async function loadRequiredLanguageParsers(filesToParse: string[]): Promise<LanguageParser> {
-  await initializeGlobalParser(); // Ensure TreeSitter itself is initialized
+	await initializeGlobalParser() // Ensure TreeSitter itself is initialized
 
-  const parsers: LanguageParser = {};
-  const uniqueExtensions = new Set(
-    filesToParse.map((file) => path.extname(file).toLowerCase().slice(1))
-  );
+	const parsers: LanguageParser = {}
+	const uniqueExtensions = new Set(filesToParse.map((file) => path.extname(file).toLowerCase().slice(1)))
 
-  for (const ext of uniqueExtensions) {
-    if (!ext) { // Handle files without extensions or empty extensions
-      continue;
-    }
+	for (const ext of uniqueExtensions) {
+		if (!ext) {
+			// Handle files without extensions or empty extensions
+			continue
+		}
 
-    const factory = LanguageFactoryRegistry.getByExtension(ext);
-    if (factory) {
-      try {
-        // The factory's load() method is responsible for loading WASM
-        // and compiling the query, and includes caching.
-        parsers[ext] = await factory.load();
-      } catch (error) {
-        console.error(
-          `[TreeSitter] Failed to load parser for extension ".${ext}":`,
-          error instanceof Error ? error.message : String(error)
-        );
-        // Optionally, re-throw or handle more gracefully depending on requirements.
-        // For now, we log the error and skip this language.
-      }
-    } else {
-      // Log a warning if no factory is found for a given extension.
-      // This indicates an unsupported language for TreeSitter parsing.
-      console.warn(`[TreeSitter] No language factory found for extension: ".${ext}"`);
-    }
-  }
-  return parsers;
+		const factory = LanguageFactoryRegistry.getByExtension(ext)
+		if (factory) {
+			try {
+				// The factory's load() method is responsible for loading WASM
+				// and compiling the query, and includes caching.
+				parsers[ext] = await factory.load()
+			} catch (error) {
+				console.error(
+					`[TreeSitter] Failed to load parser for extension ".${ext}":`,
+					error instanceof Error ? error.message : String(error),
+				)
+				// Optionally, re-throw or handle more gracefully depending on requirements.
+				// For now, we log the error and skip this language.
+			}
+		} else {
+			// Log a warning if no factory is found for a given extension.
+			// This indicates an unsupported language for TreeSitter parsing.
+			console.warn(`[TreeSitter] No language factory found for extension: ".${ext}"`)
+		}
+	}
+	return parsers
 }
